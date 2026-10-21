@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#0e6b63">
+<title>Subtitle Cleaner · fix the timing of an SRT or VTT in the tab</title>
+<meta name="description" content="Drop an SRT or VTT file, move the timing, fix overlapping cues, re-wrap long lines and take it back in the same format. No account, no upload, no watermark.">
+<meta name="author" content="Kristian Mario Miskovic (TekiDeki)">
+<meta name="robots" content="index, follow">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="favicon.ico" sizes="32x32">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="stylesheet" href="styles.css">
+<script>
+/* Paint the stored theme before the body exists, so a reload never flashes. */
+(function () {
+  try {
+    var saved = localStorage.getItem('subs.theme');
+    var dark = saved === 'dark' || (!saved && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  } catch (e) {
+    document.documentElement.setAttribute('data-theme', 'light');
+  }
+}());
+</script>
+</head>
+<body>
+
+<a class="skip" href="#file" data-i18n="skip">Skip to the file</a>
+
+<header class="topbar">
+  <div class="wrap topbar-in">
+    <a class="brand" href="#file">
+      <span class="mark" aria-hidden="true"><svg viewBox="0 0 32 32"><rect x="3.5" y="7" width="25" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="2.1"/><path d="M8.5 20h5.5M18 20h5.5M8.5 14.5h6.5M18.5 14.5h5" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/></svg></span>
+      <span class="brand-text">Subs<span class="brand-dot">.</span>Cleaner</span>
+    </a>
+    <div class="tools">
+      <label class="sr" for="lang" data-i18n="uiLanguage">Interface language</label>
+      <select id="lang" class="select"></select>
+      <button id="theme" class="iconbtn" type="button" data-i18n-aria-label="theme" aria-label="Switch theme">
+        <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.6v2.2M12 19.2v2.2M4.2 12H2M22 12h-2.2M6 6l1.6 1.6M16.4 16.4L18 18M18 6l-1.6 1.6M7.6 16.4L6 18"/></svg>
+        <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.4A8.4 8.4 0 0 1 9.6 4a8.4 8.4 0 1 0 10.4 10.4z"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap layout">
+
+  <section class="editor" id="file" aria-label="Editor">
+
+    <div class="panel">
+      <h1 data-i18n="title">Subtitles that open cleanly</h1>
+      <p class="lede" data-i18n="lede">Drop an SRT or VTT file, fix the timing and the line lengths, and take it back in the same format. Everything happens in this tab.</p>
+    </div>
+
+    <div class="panel">
+      <label class="drop" id="drop" for="file-input">
+        <svg class="drop-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5"/><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"/></svg>
+        <strong data-i18n="dropTitle">Drop an SRT or VTT here</strong>
+        <span data-i18n="dropOr">or choose one from this computer</span>
+        <input id="file-input" type="file" accept=".srt,.vtt,text/plain">
+      </label>
+      <p class="hint" data-i18n="dropHint">One file at a time. It is read here and it stays here.</p>
+      <p class="file-line" id="file-line" hidden>
+        <b id="file-name"></b>
+        <span id="file-meta"></span>
+      </p>
+
+      <label class="field" for="paste">
+        <span data-i18n="pasteLabel">Or paste the subtitles</span>
+        <textarea id="paste" rows="5" spellcheck="false" data-i18n-placeholder="pastePlaceholder" placeholder="1&#10;00:00:01,000 --&gt; 00:00:04,000&#10;Hello"></textarea>
+      </label>
+      <div class="row">
+        <button id="btn-paste" class="btn" type="button" data-i18n="loadPaste">Read this text</button>
+        <button id="btn-sample" class="btn ghost" type="button" data-i18n="sample">Load a sample</button>
+        <button id="btn-clear" class="btn ghost" type="button" data-i18n="clear" hidden>Start over</button>
+      </div>
+      <p class="hint privacy" data-i18n="privacy">The file is read by this tab. Nothing is uploaded, nothing is stored, and there is no account.</p>
+    </div>
+
+    <div class="panel">
+      <h2 data-i18n="sectionTiming">Timing</h2>
+      <div class="pair">
+        <label class="field" for="shift">
+          <span data-i18n="shiftLabel">Seconds to add</span>
+          <input id="shift" type="number" step="0.1" value="0" inputmode="decimal">
+        </label>
+        <button id="apply-shift" class="btn" type="button" data-i18n="applyShift">Apply</button>
+      </div>
+      <p class="hint" data-i18n="shiftHint">Negative moves everything earlier. Nothing ends up before zero.</p>
+
+      <div class="pair spaced">
+        <label class="field" for="speed">
+          <span data-i18n="speedLabel">Video speed</span>
+          <input id="speed" type="number" step="0.05" min="0.5" max="3" value="1" inputmode="decimal">
+        </label>
+        <button id="apply-speed" class="btn" type="button" data-i18n="applySpeed">Apply</button>
+      </div>
+      <p class="hint" data-i18n="speedHint">Use 1.25 when the video was sped up to 125 percent, so the subtitles keep up.</p>
+    </div>
+
+    <div class="panel">
+      <h2 data-i18n="sectionText">Text</h2>
+      <label class="field" for="wrap">
+        <span data-i18n="wrapLabel">Characters per line</span>
+        <input id="wrap" type="number" min="20" max="60" step="1" value="42" inputmode="numeric">
+      </label>
+      <div class="tools-grid">
+        <button id="btn-overlaps" class="btn" type="button" data-i18n="btnOverlaps">Fix overlaps</button>
+        <button id="btn-clean" class="btn" type="button" data-i18n="btnClean">Clean the text</button>
+        <button id="btn-wrap" class="btn" type="button" data-i18n="btnWrap">Re-wrap the lines</button>
+        <button id="btn-split" class="btn" type="button" data-i18n="btnSplit">Split long cues</button>
+        <button id="btn-strip" class="btn" type="button" data-i18n="btnStrip">Strip tags</button>
+        <button id="btn-sort" class="btn" type="button" data-i18n="btnSort">Sort by time</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2 data-i18n="sectionExport">Take it back</h2>
+      <div class="pair">
+        <label class="field" for="format">
+          <span data-i18n="exportFormat">Format</span>
+          <select id="format" class="input">
+            <option value="srt">SRT</option>
+            <option value="vtt">VTT</option>
+          </select>
+        </label>
+        <div class="pair-buttons">
+          <button id="btn-download" class="btn primary" type="button" data-i18n="btnDownload" disabled>Download</button>
+          <button id="btn-copy" class="btn" type="button" data-i18n="btnCopy" disabled>Copy</button>
+        </div>
+      </div>
+    </div>
+
+  </section>
+
+  <section class="viewer" aria-label="Report">
+
+    <div class="panel report">
+      <h2 data-i18n="sectionReport">What is in the file</h2>
+      <div class="stats">
+        <div class="stat">
+          <span class="stat-label" data-i18n="reportCues">Cues</span>
+          <b id="stat-cues">0</b>
+        </div>
+        <div class="stat">
+          <span class="stat-label" data-i18n="reportLength">Length</span>
+          <b id="stat-length">0:00</b>
+        </div>
+        <div class="stat">
+          <span class="stat-label" data-i18n="reportIssues">Issues</span>
+          <b id="stat-issues">0</b>
+        </div>
+      </div>
+      <ul class="issues" id="issues"></ul>
+      <p class="clean-note" id="clean-note" data-i18n="noneIssues" hidden>Nothing to fix in this file.</p>
+    </div>
+
+    <div class="cuebar">
+      <h2 data-i18n="cueList">Cues</h2>
+      <span class="count" id="count"></span>
+    </div>
+
+    <ol class="cues" id="cues"></ol>
+    <p class="hint" id="too-many" hidden></p>
+
+    <div class="empty" id="empty">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="5.5" width="19" height="13" rx="2.5"/><path d="M6.5 14.5h5M14 14.5h3.5M6.5 10h4M13 10h4.5"/></svg>
+      <p data-i18n="emptyState">Load a file to see the cues here.</p>
+    </div>
+
+  </section>
+
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <p><span data-i18n="supportText">No courses, no coaching, no "make money with AI". The tools are free and stay free.</span> <a href="https://paypal.me/TekiDeki" data-i18n="supportLink">Support the work</a></p>
+    <p class="fine"><a href="https://freehtml.dev">freehtml.dev</a> · <a href="https://github.com/TekiDeki/Subtitle-Cleaner">GitHub</a> · <span data-i18n="footerNote">One HTML file. Works offline.</span></p>
+  </div>
+</footer>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script src="model.js"></script>
+<script src="i18n/locales.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+1
+00:00:01,000 --> 00:00:03,000
+The first cue is fine.
+
+2
+00:00:02,500 --> 00:00:05,000
+The second cue overlaps the first one.
+
+3
+00:00:06,000 --> 00:00:06,400
+Short
+

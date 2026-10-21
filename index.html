@@ -1,0 +1,1282 @@
+<!DOCTYPE html>
+<html lang="en" data-version="1.0.0">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#0e6b63">
+<title>Subtitle Cleaner · fix the timing of an SRT or VTT in the tab</title>
+<meta name="description" content="Drop an SRT or VTT file, move the timing, fix overlapping cues, re-wrap long lines and take it back in the same format. No account, no upload, no watermark.">
+<meta name="author" content="Kristian Mario Miskovic (TekiDeki)">
+<meta name="robots" content="index, follow">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="favicon.ico" sizes="32x32">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<style>
+/* Subtitle Cleaner - TekiDeki
+   SPDX-License-Identifier: Apache-2.0
+   One skin for the tool, a second one for the dark theme. Times are set in a
+   tabular monospace so two cues can be compared by eye while scrolling. */
+
+:root{
+  --bg:#f2f5f4; --surface:#ffffff; --surface-2:#e8efed; --ink:#0f1a18; --muted:#546763;
+  --line:#d3e0dc; --accent:#0e6b63; --accent-ink:#ffffff; --danger:#a43126;
+  --shadow:0 1px 2px rgba(15,26,24,.06),0 14px 34px -20px rgba(15,26,24,.42);
+  --r:14px; --r-sm:9px;
+  --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+html[data-theme="dark"]{
+  --bg:#0a1110; --surface:#111a19; --surface-2:#172322; --ink:#e8f2f0; --muted:#95aba6;
+  --line:#233230; --accent:#63cfc0; --accent-ink:#07201d; --danger:#ef8f83;
+  --shadow:0 1px 2px rgba(0,0,0,.55),0 20px 44px -26px rgba(0,0,0,.95);
+}
+*{box-sizing:border-box}
+[hidden]{display:none !important}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15.5px;line-height:1.5;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1320px;margin:0 auto;padding:0 20px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.skip{position:absolute;left:-999px}
+.skip:focus{left:12px;top:12px;z-index:30;background:var(--surface);padding:10px 14px;border-radius:8px}
+
+/* top bar */
+.topbar{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.topbar-in{display:flex;align-items:center;justify-content:space-between;gap:12px;height:60px}
+.brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--ink);font-weight:650}
+.mark{width:30px;height:30px;display:grid;place-items:center;border-radius:8px;background:var(--accent);color:var(--accent-ink)}
+.mark svg{width:20px;height:20px;fill:none;stroke:currentColor}
+.brand-dot{color:var(--accent)}
+.tools{display:flex;align-items:center;gap:8px}
+.select,.iconbtn{height:36px;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:9px;font:inherit}
+.select{padding:0 8px;max-width:150px}
+.iconbtn{width:36px;display:grid;place-items:center;cursor:pointer}
+.iconbtn svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round}
+html[data-theme="dark"] .moon{display:none}
+html[data-theme="light"] .sun{display:none}
+
+/* the two columns */
+.layout{display:grid;grid-template-columns:minmax(330px,440px) minmax(0,1fr);gap:22px;align-items:start;padding-top:22px;padding-bottom:30px}
+.editor{display:flex;flex-direction:column;gap:14px;min-width:0}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px 16px 14px;box-shadow:var(--shadow)}
+.panel h2{margin:0 0 12px;font-size:12.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+h1{font-size:22px;margin:0 0 6px;letter-spacing:-.015em}
+.lede{margin:0;color:var(--muted);font-size:14.5px}
+.hint{margin:8px 0 0;color:var(--muted);font-size:13px}
+.privacy{margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
+
+/* drop zone */
+.drop{
+  display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center;
+  border:2px dashed var(--line);border-radius:var(--r);padding:24px 16px;cursor:pointer;
+  background:color-mix(in srgb,var(--surface-2) 45%,var(--surface));transition:border-color .15s,background .15s;
+}
+.drop:hover,.drop.over{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,var(--surface))}
+.drop strong{font-size:15.5px}
+.drop span{color:var(--muted);font-size:13.5px}
+.drop-icon{width:28px;height:28px;fill:none;stroke:var(--accent);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;margin-bottom:4px}
+.drop input{position:absolute;width:1px;height:1px;opacity:0}
+
+/* loaded file line */
+.file-line{margin:12px 0 0;padding:9px 11px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface-2);font-size:13.5px}
+.file-line b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-line span{color:var(--muted);font:12.5px/1.5 var(--mono)}
+
+/* fields */
+.field{display:block;margin:12px 0 0}
+.field>span{display:block;font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:5px}
+.field input,.field select,.field textarea{
+  width:100%;font:inherit;font-size:14.5px;color:var(--ink);background:var(--surface-2);
+  border:1px solid var(--line);border-radius:var(--r-sm);padding:9px 10px;
+}
+.field textarea{resize:vertical;min-height:96px;font:13px/1.45 var(--mono)}
+.field input:focus,.field select:focus,.field textarea:focus{outline:2px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:1px;border-color:var(--accent)}
+.pair{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:end}
+.pair.spaced{margin-top:14px}
+.pair-buttons{display:flex;gap:8px;flex-wrap:wrap}
+
+/* buttons */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;
+  font:600 13.5px/1 var(--sans);padding:10px 13px;border-radius:9px;cursor:pointer;
+  border:1px solid var(--line);background:var(--surface);color:var(--ink);text-decoration:none;
+}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.ghost{background:transparent}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn:disabled:hover{border-color:var(--line)}
+.row{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.tools-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:12px}
+.tools-grid .btn{justify-content:flex-start;text-align:left}
+
+/* report */
+.viewer{min-width:0;display:flex;flex-direction:column;gap:12px}
+.report h2{margin-bottom:10px}
+.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.stat{background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-sm);padding:9px 11px}
+.stat-label{display:block;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.stat b{font:600 19px/1.3 var(--mono);font-variant-numeric:tabular-nums}
+.issues{list-style:none;display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 0;padding:0}
+.issues:empty{display:none}
+.issues li{
+  display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:999px;
+  border:1px solid color-mix(in srgb,var(--danger) 35%,var(--line));
+  background:color-mix(in srgb,var(--danger) 8%,var(--surface));
+  font-size:12.5px;color:var(--ink);
+}
+.issues .dot{opacity:.5}
+.issues b{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.clean-note{margin:12px 0 0;font-size:13.5px;color:var(--accent);font-weight:600}
+
+/* cue list */
+.cuebar{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:0 4px}
+.cuebar h2{margin:0;font-size:12.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.count{font:600 12.5px/1.3 var(--mono);color:var(--muted)}
+.cues{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.cues:empty{display:none}
+.cue{
+  display:grid;grid-template-columns:86px minmax(0,1fr);gap:12px;align-items:start;
+  background:var(--surface);border:1px solid var(--line);border-left:3px solid transparent;
+  border-radius:var(--r-sm);padding:8px 11px;box-shadow:var(--shadow);
+}
+.cue.flag{border-left-color:var(--danger)}
+.cue-time{font:12px/1.6 var(--mono);color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.cue-time b{display:block;color:var(--ink);font-weight:600}
+.cue-text{min-width:0;font-size:14px;white-space:pre-wrap;overflow-wrap:anywhere}
+.cue-text mark{background:color-mix(in srgb,var(--danger) 18%,transparent);color:inherit;border-radius:3px}
+.cue-flags{display:block;margin-top:3px;font:11.5px/1.4 var(--mono);color:var(--danger)}
+
+/* empty state */
+.empty{display:grid;place-items:center;text-align:center;gap:10px;padding:52px 20px;border:1px dashed var(--line);border-radius:var(--r);color:var(--muted)}
+.empty svg{width:40px;height:40px;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round;opacity:.7}
+.empty p{margin:0;font-size:14px;max-width:38ch}
+
+/* foot + toast */
+.foot{border-top:1px solid var(--line);padding:16px 0 30px;color:var(--muted);font-size:13.5px}
+.foot p{margin:0 0 6px}
+.foot a{color:var(--accent)}
+.foot .fine{font-size:12.5px;opacity:.9}
+.toast{
+  position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:50;
+  max-width:min(520px,calc(100vw - 32px));padding:11px 15px;border-radius:10px;
+  background:var(--ink);color:var(--bg);font-size:13.5px;font-weight:600;
+  box-shadow:0 18px 40px -18px rgba(0,0,0,.7);text-align:center;
+}
+
+@media (max-width:1040px){
+  .layout{grid-template-columns:minmax(0,1fr)}
+}
+@media (max-width:520px){
+  .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tools-grid{grid-template-columns:minmax(0,1fr)}
+  .cue{grid-template-columns:minmax(0,1fr);gap:3px}
+  .cue-time b{display:inline}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none !important;animation:none !important}}
+</style>
+<script>
+/* Paint the stored theme before the body exists, so a reload never flashes. */
+(function () {
+  try {
+    var saved = localStorage.getItem('subs.theme');
+    var dark = saved === 'dark' || (!saved && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  } catch (e) {
+    document.documentElement.setAttribute('data-theme', 'light');
+  }
+}());
+</script>
+</head>
+<body>
+
+<a class="skip" href="#file" data-i18n="skip">Skip to the file</a>
+
+<header class="topbar">
+  <div class="wrap topbar-in">
+    <a class="brand" href="#file">
+      <span class="mark" aria-hidden="true"><svg viewBox="0 0 32 32"><rect x="3.5" y="7" width="25" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="2.1"/><path d="M8.5 20h5.5M18 20h5.5M8.5 14.5h6.5M18.5 14.5h5" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/></svg></span>
+      <span class="brand-text">Subs<span class="brand-dot">.</span>Cleaner</span>
+    </a>
+    <div class="tools">
+      <label class="sr" for="lang" data-i18n="uiLanguage">Interface language</label>
+      <select id="lang" class="select"></select>
+      <button id="theme" class="iconbtn" type="button" data-i18n-aria-label="theme" aria-label="Switch theme">
+        <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.6v2.2M12 19.2v2.2M4.2 12H2M22 12h-2.2M6 6l1.6 1.6M16.4 16.4L18 18M18 6l-1.6 1.6M7.6 16.4L6 18"/></svg>
+        <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.4A8.4 8.4 0 0 1 9.6 4a8.4 8.4 0 1 0 10.4 10.4z"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap layout">
+
+  <section class="editor" id="file" aria-label="Editor">
+
+    <div class="panel">
+      <h1 data-i18n="title">Subtitles that open cleanly</h1>
+      <p class="lede" data-i18n="lede">Drop an SRT or VTT file, fix the timing and the line lengths, and take it back in the same format. Everything happens in this tab.</p>
+    </div>
+
+    <div class="panel">
+      <label class="drop" id="drop" for="file-input">
+        <svg class="drop-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5"/><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"/></svg>
+        <strong data-i18n="dropTitle">Drop an SRT or VTT here</strong>
+        <span data-i18n="dropOr">or choose one from this computer</span>
+        <input id="file-input" type="file" accept=".srt,.vtt,text/plain">
+      </label>
+      <p class="hint" data-i18n="dropHint">One file at a time. It is read here and it stays here.</p>
+      <p class="file-line" id="file-line" hidden>
+        <b id="file-name"></b>
+        <span id="file-meta"></span>
+      </p>
+
+      <label class="field" for="paste">
+        <span data-i18n="pasteLabel">Or paste the subtitles</span>
+        <textarea id="paste" rows="5" spellcheck="false" data-i18n-placeholder="pastePlaceholder" placeholder="1&#10;00:00:01,000 --&gt; 00:00:04,000&#10;Hello"></textarea>
+      </label>
+      <div class="row">
+        <button id="btn-paste" class="btn" type="button" data-i18n="loadPaste">Read this text</button>
+        <button id="btn-sample" class="btn ghost" type="button" data-i18n="sample">Load a sample</button>
+        <button id="btn-clear" class="btn ghost" type="button" data-i18n="clear" hidden>Start over</button>
+      </div>
+      <p class="hint privacy" data-i18n="privacy">The file is read by this tab. Nothing is uploaded, nothing is stored, and there is no account.</p>
+    </div>
+
+    <div class="panel">
+      <h2 data-i18n="sectionTiming">Timing</h2>
+      <div class="pair">
+        <label class="field" for="shift">
+          <span data-i18n="shiftLabel">Seconds to add</span>
+          <input id="shift" type="number" step="0.1" value="0" inputmode="decimal">
+        </label>
+        <button id="apply-shift" class="btn" type="button" data-i18n="applyShift">Apply</button>
+      </div>
+      <p class="hint" data-i18n="shiftHint">Negative moves everything earlier. Nothing ends up before zero.</p>
+
+      <div class="pair spaced">
+        <label class="field" for="speed">
+          <span data-i18n="speedLabel">Video speed</span>
+          <input id="speed" type="number" step="0.05" min="0.5" max="3" value="1" inputmode="decimal">
+        </label>
+        <button id="apply-speed" class="btn" type="button" data-i18n="applySpeed">Apply</button>
+      </div>
+      <p class="hint" data-i18n="speedHint">Use 1.25 when the video was sped up to 125 percent, so the subtitles keep up.</p>
+    </div>
+
+    <div class="panel">
+      <h2 data-i18n="sectionText">Text</h2>
+      <label class="field" for="wrap">
+        <span data-i18n="wrapLabel">Characters per line</span>
+        <input id="wrap" type="number" min="20" max="60" step="1" value="42" inputmode="numeric">
+      </label>
+      <div class="tools-grid">
+        <button id="btn-overlaps" class="btn" type="button" data-i18n="btnOverlaps">Fix overlaps</button>
+        <button id="btn-clean" class="btn" type="button" data-i18n="btnClean">Clean the text</button>
+        <button id="btn-wrap" class="btn" type="button" data-i18n="btnWrap">Re-wrap the lines</button>
+        <button id="btn-split" class="btn" type="button" data-i18n="btnSplit">Split long cues</button>
+        <button id="btn-strip" class="btn" type="button" data-i18n="btnStrip">Strip tags</button>
+        <button id="btn-sort" class="btn" type="button" data-i18n="btnSort">Sort by time</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2 data-i18n="sectionExport">Take it back</h2>
+      <div class="pair">
+        <label class="field" for="format">
+          <span data-i18n="exportFormat">Format</span>
+          <select id="format" class="input">
+            <option value="srt">SRT</option>
+            <option value="vtt">VTT</option>
+          </select>
+        </label>
+        <div class="pair-buttons">
+          <button id="btn-download" class="btn primary" type="button" data-i18n="btnDownload" disabled>Download</button>
+          <button id="btn-copy" class="btn" type="button" data-i18n="btnCopy" disabled>Copy</button>
+        </div>
+      </div>
+    </div>
+
+  </section>
+
+  <section class="viewer" aria-label="Report">
+
+    <div class="panel report">
+      <h2 data-i18n="sectionReport">What is in the file</h2>
+      <div class="stats">
+        <div class="stat">
+          <span class="stat-label" data-i18n="reportCues">Cues</span>
+          <b id="stat-cues">0</b>
+        </div>
+        <div class="stat">
+          <span class="stat-label" data-i18n="reportLength">Length</span>
+          <b id="stat-length">0:00</b>
+        </div>
+        <div class="stat">
+          <span class="stat-label" data-i18n="reportIssues">Issues</span>
+          <b id="stat-issues">0</b>
+        </div>
+      </div>
+      <ul class="issues" id="issues"></ul>
+      <p class="clean-note" id="clean-note" data-i18n="noneIssues" hidden>Nothing to fix in this file.</p>
+    </div>
+
+    <div class="cuebar">
+      <h2 data-i18n="cueList">Cues</h2>
+      <span class="count" id="count"></span>
+    </div>
+
+    <ol class="cues" id="cues"></ol>
+    <p class="hint" id="too-many" hidden></p>
+
+    <div class="empty" id="empty">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="5.5" width="19" height="13" rx="2.5"/><path d="M6.5 14.5h5M14 14.5h3.5M6.5 10h4M13 10h4.5"/></svg>
+      <p data-i18n="emptyState">Load a file to see the cues here.</p>
+    </div>
+
+  </section>
+
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <p><span data-i18n="supportText">No courses, no coaching, no "make money with AI". The tools are free and stay free.</span> <a href="https://paypal.me/TekiDeki" data-i18n="supportLink">Support the work</a></p>
+    <p class="fine"><a href="https://freehtml.dev">freehtml.dev</a> · <a href="https://github.com/TekiDeki/Subtitle-Cleaner">GitHub</a> · <span data-i18n="footerNote">One HTML file. Works offline.</span></p>
+  </div>
+</footer>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script>
+/* Subtitle Cleaner - TekiDeki
+   SPDX-License-Identifier: Apache-2.0
+
+   Everything here is plain text in, plain text out. Times are whole
+   milliseconds, never floats, so the same file always gives the same result
+   and the tests can compare numbers instead of hoping. */
+
+(function (global) {
+  'use strict';
+
+  var DEFAULT_LIMITS = {
+    minDuration: 800,
+    maxDuration: 7000,
+    maxCharsPerLine: 42,
+    maxLines: 2,
+    maxCps: 21
+  };
+
+  function pad(value, width) {
+    var text = String(Math.abs(value));
+    while (text.length < width) text = '0' + text;
+    return text;
+  }
+
+  /* ---------------------------------------------------------------- timecodes */
+
+  function parseStamp(raw) {
+    if (typeof raw !== 'string') return null;
+    var match = raw.trim().match(/^(?:(\d+):)?(\d{1,2}):(\d{2})[.,](\d{1,3})$/);
+    if (!match) return null;
+    var hours = match[1] ? Number(match[1]) : 0;
+    var minutes = Number(match[2]);
+    var seconds = Number(match[3]);
+    var millis = Number((match[4] + '000').slice(0, 3));
+    if (minutes > 59 || seconds > 59) return null;
+    return ((hours * 60 + minutes) * 60 + seconds) * 1000 + millis;
+  }
+
+  function formatStamp(ms, separator) {
+    var total = Math.max(0, Math.round(ms));
+    var hours = Math.floor(total / 3600000);
+    var minutes = Math.floor((total % 3600000) / 60000);
+    var seconds = Math.floor((total % 60000) / 1000);
+    var millis = total % 1000;
+    return pad(hours, 2) + ':' + pad(minutes, 2) + ':' + pad(seconds, 2) +
+      separator + pad(millis, 3);
+  }
+
+  function formatClock(ms) {
+    var total = Math.max(0, Math.round(ms / 1000));
+    var hours = Math.floor(total / 3600);
+    var minutes = Math.floor((total % 3600) / 60);
+    var seconds = total % 60;
+    return hours ? hours + ':' + pad(minutes, 2) + ':' + pad(seconds, 2)
+      : minutes + ':' + pad(seconds, 2);
+  }
+
+  /* -------------------------------------------------------------------- text */
+
+  var ENTITIES = {
+    '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'",
+    '&apos;': "'", '&nbsp;': ' '
+  };
+
+  function decodeEntities(text) {
+    return text.replace(/&(?:amp|lt|gt|quot|#39|apos|nbsp);/g, function (one) {
+      return ENTITIES[one] || one;
+    });
+  }
+
+  function plain(text) {
+    return decodeEntities(text)
+      .replace(/<[^>]*>/g, '')
+      .replace(/\{\\[^}]*\}/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function countChars(text) {
+    return plain(text).replace(/\s/g, '').length;
+  }
+
+  /* ------------------------------------------------------------------- parse */
+
+  function splitBlocks(text) {
+    return text.split(/\n{2,}/).map(function (block) {
+      return block.split('\n');
+    }).filter(function (lines) {
+      return lines.some(function (line) { return line.trim() !== ''; });
+    });
+  }
+
+  function parse(text) {
+    var clean = String(text || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+    var warnings = [];
+    var looksVtt = /^WEBVTT/.test(clean.trimStart());
+    var format = looksVtt ? 'vtt' : 'srt';
+    var cues = [];
+    var blocks = splitBlocks(clean);
+
+    blocks.forEach(function (lines, blockIndex) {
+      if (blocks.length && blockIndex === 0 && /^\s*WEBVTT/.test(lines[0])) {
+        lines = lines.slice(1);
+        if (!lines.length) return;
+      }
+      var arrow = -1;
+      for (var i = 0; i < lines.length; i++) {
+        if (lines[i].indexOf('-->') !== -1) { arrow = i; break; }
+      }
+      if (arrow === -1) return;
+
+      var timing = lines[arrow].split('-->');
+      var start = parseStamp(timing[0]);
+      var end = parseStamp(String(timing[1] || '').trim().split(/\s+/)[0]);
+      if (start === null || end === null) {
+        warnings.push({ code: 'badTiming', line: lines[arrow] });
+        return;
+      }
+      var body = lines.slice(arrow + 1).join('\n').replace(/\s+$/, '');
+      cues.push({ index: cues.length + 1, start: start, end: end, text: body });
+    });
+
+    return { format: format, cues: cues, warnings: warnings };
+  }
+
+  /* --------------------------------------------------------------- serialize */
+
+  function serialize(cues, format) {
+    var vtt = format === 'vtt';
+    var sep = vtt ? '.' : ',';
+    var out = vtt ? ['WEBVTT', ''] : [];
+    cues.forEach(function (cue, position) {
+      if (!vtt) out.push(String(position + 1));
+      out.push(formatStamp(cue.start, sep) + ' --> ' + formatStamp(cue.end, sep));
+      out.push(cue.text);
+      out.push('');
+    });
+    if (out.length) out.push('');
+    return out.join('\n');
+  }
+
+  /* ------------------------------------------------------------------ audit */
+
+  function audit(cues, limits) {
+    var L = limits || DEFAULT_LIMITS;
+    var counts = {
+      empty: 0, backwards: 0, overlap: 0, short: 0, long: 0,
+      fast: 0, lineLong: 0, tooManyLines: 0
+    };
+    var rows = [];
+
+    cues.forEach(function (cue, position) {
+      var text = cue.text || '';
+      var duration = cue.end - cue.start;
+      var body = plain(text);
+      var lines = text.split('\n');
+
+      var overlapsNext = position + 1 < cues.length && cue.end > cues[position + 1].start;
+      var overlapsPrev = position > 0 && cues[position - 1].end > cue.start;
+
+      var longLine = false;
+      lines.forEach(function (line) {
+        if (plain(line).length > L.maxCharsPerLine) longLine = true;
+      });
+
+      var tooFast = body !== '' && duration > 0 &&
+        countChars(text) / (duration / 1000) > L.maxCps + 0.5;
+
+      if (body === '') counts.empty++;
+      if (cue.end < cue.start) counts.backwards++;
+      if (overlapsPrev) counts.overlap++;
+      if (duration > 0 && duration < L.minDuration) counts.short++;
+      if (duration > L.maxDuration) counts.long++;
+      if (tooFast) counts.fast++;
+      if (longLine) counts.lineLong++;
+      if (lines.length > L.maxLines) counts.tooManyLines++;
+
+      var codes = [];
+      if (body === '') codes.push('empty');
+      if (cue.end < cue.start) codes.push('backwards');
+      if (overlapsPrev || overlapsNext) codes.push('overlap');
+      if (duration > 0 && duration < L.minDuration) codes.push('short');
+      if (duration > L.maxDuration) codes.push('long');
+      if (tooFast) codes.push('fast');
+      if (longLine) codes.push('lineLong');
+      if (lines.length > L.maxLines) codes.push('tooManyLines');
+
+      if (codes.length) rows.push({ index: position, codes: codes });
+    });
+
+    var total = 0;
+    Object.keys(counts).forEach(function (key) { total += counts[key]; });
+
+    return { counts: counts, rows: rows, total: total };
+  }
+
+  /* ------------------------------------------------------------- operations */
+
+  function cleanText(cues) {
+    var removed = 0;
+    var out = [];
+    cues.forEach(function (cue) {
+      var lines = cue.text.split('\n').map(function (line) {
+        return line.replace(/\s+/g, ' ').trim();
+      }).filter(function (line) { return line !== ''; });
+      if (!lines.length) { removed++; return; }
+      var copy = { index: 0, start: cue.start, end: cue.end, text: lines.join('\n') };
+      if (copy.text !== cue.text) copy.changed = true;
+      out.push(copy);
+    });
+    return { cues: renumber(out), removed: removed };
+  }
+
+  function stripTags(cues) {
+    var changed = 0;
+    var out = cues.map(function (cue) {
+      var text = cue.text
+        .replace(/<[^>]*>/g, '')
+        .replace(/\{\\[^}]*\}/g, '')
+        .replace(/[ \t]{2,}/g, ' ')
+        .trim();
+      if (text !== cue.text) changed++;
+      return { index: 0, start: cue.start, end: cue.end, text: text };
+    });
+    return { cues: renumber(out), changed: changed };
+  }
+
+  function shift(cues, millis) {
+    var clamped = 0;
+    var out = cues.map(function (cue) {
+      var start = cue.start + millis;
+      var end = cue.end + millis;
+      if (start < 0) {
+        var duration = cue.end - cue.start;
+        start = 0;
+        end = Math.max(0, duration);
+        clamped++;
+      }
+      return { index: 0, start: Math.round(start), end: Math.round(end), text: cue.text };
+    });
+    return { cues: renumber(out), clamped: clamped };
+  }
+
+  function retime(cues, factor) {
+    var safe = Number(factor);
+    if (!isFinite(safe) || safe <= 0.1 || safe > 10) return { cues: cues.slice(), factor: 1 };
+    var out = cues.map(function (cue) {
+      return {
+        index: 0,
+        start: Math.round(cue.start / safe),
+        end: Math.round(cue.end / safe),
+        text: cue.text
+      };
+    });
+    return { cues: renumber(out), factor: safe };
+  }
+
+  function fixOverlaps(cues, minDuration) {
+    var floor = typeof minDuration === 'number' ? minDuration : 100;
+    var out = cues.map(function (cue) {
+      return { index: 0, start: cue.start, end: cue.end, text: cue.text };
+    });
+    var fixed = 0;
+    var left = 0;
+    for (var i = 0; i < out.length - 1; i++) {
+      var a = out[i];
+      var b = out[i + 1];
+      if (a.end > b.start) {
+        if (b.start - a.start >= floor) {
+          a.end = b.start;
+          fixed++;
+        } else {
+          left++;
+        }
+      }
+    }
+    return { cues: renumber(out), fixed: fixed, left: left };
+  }
+
+  function wrapLine(line, maxChars) {
+    var words = line.split(/\s+/).filter(Boolean);
+    var lines = [];
+    var current = '';
+    words.forEach(function (word) {
+      while (word.length > maxChars) {
+        if (current) { lines.push(current); current = ''; }
+        lines.push(word.slice(0, maxChars));
+        word = word.slice(maxChars);
+      }
+      if (!current) current = word;
+      else if ((current + ' ' + word).length <= maxChars) current += ' ' + word;
+      else { lines.push(current); current = word; }
+    });
+    if (current) lines.push(current);
+    return lines;
+  }
+
+  function rewrap(cues, maxChars) {
+    var limit = maxChars || DEFAULT_LIMITS.maxCharsPerLine;
+    var changed = 0;
+    var out = cues.map(function (cue) {
+      var joined = cue.text.split('\n').map(function (line) { return line.trim(); })
+        .filter(Boolean).join(' ');
+      var text = wrapLine(joined, limit).join('\n');
+      if (text !== cue.text) changed++;
+      return { index: 0, start: cue.start, end: cue.end, text: text };
+    });
+    return { cues: renumber(out), changed: changed };
+  }
+
+  function splitLong(cues, maxChars, maxLines) {
+    var limit = (maxChars || DEFAULT_LIMITS.maxCharsPerLine) * (maxLines || DEFAULT_LIMITS.maxLines);
+    var parts = 0;
+    var out = [];
+    cues.forEach(function (cue) {
+      var joined = cue.text.split('\n').map(function (line) { return line.trim(); })
+        .filter(Boolean).join(' ');
+      if (joined.length <= limit || cue.end <= cue.start) {
+        out.push({ index: 0, start: cue.start, end: cue.end, text: cue.text });
+        return;
+      }
+      var words = joined.split(/\s+/);
+      var chunks = [];
+      var current = '';
+      words.forEach(function (word) {
+        if (!current) current = word;
+        else if ((current + ' ' + word).length <= limit) current += ' ' + word;
+        else { chunks.push(current); current = word; }
+      });
+      if (current) chunks.push(current);
+      if (chunks.length < 2) {
+        out.push({ index: 0, start: cue.start, end: cue.end, text: cue.text });
+        return;
+      }
+      var totalChars = joined.length;
+      var span = cue.end - cue.start;
+      var cursor = cue.start;
+      chunks.forEach(function (chunk, at) {
+        var last = at === chunks.length - 1;
+        var share = last ? cue.end - cursor
+          : Math.round(span * (chunk.length / totalChars));
+        var end = last ? cue.end : Math.min(cue.end, cursor + Math.max(300, share));
+        out.push({ index: 0, start: cursor, end: end, text: chunk });
+        cursor = end;
+      });
+      parts += chunks.length - 1;
+    });
+    return { cues: renumber(out), parts: parts };
+  }
+
+  function sortByTime(cues, stable) {
+    var rows = cues.map(function (cue, at) { return { cue: cue, at: at }; });
+    rows.sort(function (a, b) {
+      if (a.cue.start !== b.cue.start) return a.cue.start - b.cue.start;
+      if (stable) return a.at - b.at;
+      return a.cue.end - b.cue.end;
+    });
+    return renumber(rows.map(function (row) {
+      return { index: 0, start: row.cue.start, end: row.cue.end, text: row.cue.text };
+    }));
+  }
+
+  function renumber(cues) {
+    return cues.map(function (cue, at) {
+      var copy = { index: at + 1, start: cue.start, end: cue.end, text: cue.text };
+      if (cue.changed) copy.changed = true;
+      return copy;
+    });
+  }
+
+  function totalLength(cues) {
+    if (!cues.length) return 0;
+    var end = 0;
+    cues.forEach(function (cue) { if (cue.end > end) end = cue.end; });
+    return end;
+  }
+
+  var api = {
+    DEFAULT_LIMITS: DEFAULT_LIMITS,
+    parse: parse,
+    serialize: serialize,
+    parseStamp: parseStamp,
+    formatStamp: formatStamp,
+    formatClock: formatClock,
+    plain: plain,
+    countChars: countChars,
+    audit: audit,
+    cleanText: cleanText,
+    stripTags: stripTags,
+    shift: shift,
+    retime: retime,
+    fixOverlaps: fixOverlaps,
+    rewrap: rewrap,
+    splitLong: splitLong,
+    sortByTime: sortByTime,
+    wrapLine: wrapLine,
+    totalLength: totalLength
+  };
+
+  global.TDSubs = api;
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+}(typeof window !== 'undefined' ? window : globalThis));
+</script>
+<script>
+/* Generated by build.py. Do not edit. */
+window.TD_LOCALES = {
+  "en": {"applyShift": "Apply", "applySpeed": "Apply", "btnClean": "Clean the text", "btnCopy": "Copy", "btnDownload": "Download", "btnOverlaps": "Fix overlaps", "btnSort": "Sort by time", "btnSplit": "Split long cues", "btnStrip": "Strip tags", "btnWrap": "Re-wrap the lines", "clear": "Start over", "copied": "Copied", "cueList": "Cues", "dropHint": "One file at a time. It is read here and it stays here.", "dropOr": "or choose one from this computer", "dropTitle": "Drop an SRT or VTT here", "emptyState": "Load a file to see the cues here.", "errorFile": "That file could not be read as text.", "errorParse": "That text has no subtitle cues in it.", "exportFormat": "Format", "fileCues_few": "{n} cues", "fileCues_many": "{n} cues", "fileCues_one": "{n} cue", "fileLength": "{t} long", "footerNote": "One HTML file. Works offline.", "issueBackwards": "Backwards times", "issueEmpty": "Empty cues", "issueFast": "Fast cues", "issueLineLong": "Long lines", "issueLines": "Too many lines", "issueLong": "Long cues", "issueOverlap": "Overlap", "issueShort": "Short cues", "lede": "Drop an SRT or VTT file, fix the timing and the line lengths, and take it back in the same format. Everything happens in this tab.", "loadPaste": "Read this text", "noneIssues": "Nothing to fix in this file.", "pasteLabel": "Or paste the subtitles", "pastePlaceholder": "1\n00:00:01,000 --> 00:00:04,000\nHello", "privacy": "The file is read by this tab. Nothing is uploaded, nothing is stored, and there is no account.", "reportCues": "Cues", "reportIssues": "Issues", "reportLength": "Length", "sample": "Load a sample", "sampleName": "sample.srt", "sectionExport": "Take it back", "sectionReport": "What is in the file", "sectionText": "Text", "sectionTiming": "Timing", "shiftHint": "Negative moves everything earlier. Nothing ends up before zero.", "shiftLabel": "Seconds to add", "skip": "Skip to the file", "speedHint": "Use 1.25 when the video was sped up to 125 percent, so the subtitles keep up.", "speedLabel": "Video speed", "supportLink": "Support the work", "supportText": "No courses, no coaching, no \"make money with AI\". The tools are free and stay free.", "theme": "Switch theme", "title": "Subtitles that open cleanly", "toastCleaned": "Cues removed: {n}", "toastFixed": "Overlaps fixed: {n}", "toastLeft": "Still overlapping: {n}. The earlier cue was too short to trim.", "toastShift": "Moved by {n} seconds.", "toastSorted": "Sorted by time.", "toastSpeed": "Retimed for {n}x.", "toastSplit": "Cues split: {n}", "toastStripped": "Cues cleaned of tags: {n}", "toastWrapped": "Lines re-wrapped: {n}", "tooMany": "Showing the first {n}. The rest are in the file.", "uiLanguage": "Interface language", "wrapLabel": "Characters per line"},
+  "ro": {"applyShift": "Aplică", "applySpeed": "Aplică", "btnClean": "Curăță textul", "btnCopy": "Copiază", "btnDownload": "Descarcă", "btnOverlaps": "Repară suprapunerile", "btnSort": "Sortează după timp", "btnSplit": "Taie replicile lungi", "btnStrip": "Scoate etichetele", "btnWrap": "Reîmparte rândurile", "clear": "Ia de la capăt", "copied": "Copiat", "cueList": "Replici", "dropHint": "Un fișier odată. E citit aici și rămâne aici.", "dropOr": "sau alege unul de pe calculator", "dropTitle": "Trage un SRT sau VTT aici", "emptyState": "Încarcă un fișier ca să vezi replicile aici.", "errorFile": "Fișierul nu a putut fi citit ca text.", "errorParse": "Textul ăsta nu conține replici de subtitrare.", "exportFormat": "Format", "fileCues_few": "{n} replici", "fileCues_many": "{n} de replici", "fileCues_one": "{n} replică", "fileLength": "lungime {t}", "footerNote": "Un singur fișier HTML. Merge și fără internet.", "issueBackwards": "Timpi inversați", "issueEmpty": "Replici goale", "issueFast": "Replici rapide", "issueLineLong": "Rânduri lungi", "issueLines": "Prea multe rânduri", "issueLong": "Replici lungi", "issueOverlap": "Suprapuneri", "issueShort": "Replici scurte", "lede": "Tragi un fișier SRT sau VTT, repari timpii și lungimea rândurilor, și îl iei înapoi în același format. Totul se întâmplă în tab.", "loadPaste": "Citește textul", "noneIssues": "Nu e nimic de reparat în fișierul ăsta.", "pasteLabel": "Sau lipește subtitrarea", "pastePlaceholder": "1\n00:00:01,000 --> 00:00:04,000\nBună", "privacy": "Fișierul e citit de tab. Nimic nu se încarcă, nimic nu se salvează, nu se cere cont.", "reportCues": "Replici", "reportIssues": "Probleme", "reportLength": "Lungime", "sample": "Încarcă un exemplu", "sampleName": "exemplu.srt", "sectionExport": "Ia-l înapoi", "sectionReport": "Ce e în fișier", "sectionText": "Textul", "sectionTiming": "Timpii", "shiftHint": "Negativ mută tot mai devreme. Nimic nu ajunge înainte de zero.", "shiftLabel": "Secunde de adăugat", "skip": "Sari la fișier", "speedHint": "Pune 1,25 dacă filmul a fost accelerat la 125 la sută, ca subtitrarea să țină pasul.", "speedLabel": "Viteza filmului", "supportLink": "Susține munca", "supportText": "Fără cursuri, fără coaching, fără \"fă bani cu AI\". Uneltele sunt gratuite și rămân gratuite.", "theme": "Schimbă tema", "title": "Subtitrări care se deschid curat", "toastCleaned": "Replici scoase: {n}", "toastFixed": "Suprapuneri reparate: {n}", "toastLeft": "Încă suprapuse: {n}. Replica dinainte era prea scurtă ca să fie tăiată.", "toastShift": "Mutat cu {n} secunde.", "toastSorted": "Sortat după timp.", "toastSpeed": "Retimat pentru {n}x.", "toastSplit": "Replici tăiate: {n}", "toastStripped": "Replici curățate de etichete: {n}", "toastWrapped": "Rânduri reîmpărțite: {n}", "tooMany": "Se văd primele {n}. Restul sunt în fișier.", "uiLanguage": "Limba interfeței", "wrapLabel": "Caractere pe rând"},
+  "sr-latn": {"applyShift": "Primeni", "applySpeed": "Primeni", "btnClean": "Očisti tekst", "btnCopy": "Kopiraj", "btnDownload": "Preuzmi", "btnOverlaps": "Popravi preklapanja", "btnSort": "Sortiraj po vremenu", "btnSplit": "Podeli dugačke titlove", "btnStrip": "Skini oznake", "btnWrap": "Prelomi redove", "clear": "Počni ispočetka", "copied": "Kopirano", "cueList": "Titlovi", "dropHint": "Jedan fajl odjednom. Čita se ovde i ostaje ovde.", "dropOr": "ili izaberi jedan sa računara", "dropTitle": "Ubaci SRT ili VTT ovde", "emptyState": "Učitaj fajl pa ćeš videti titlove ovde.", "errorFile": "Fajl nije mogao da se pročita kao tekst.", "errorParse": "U ovom tekstu nema titlova.", "exportFormat": "Format", "fileCues_few": "{n} titla", "fileCues_many": "{n} titlova", "fileCues_one": "{n} titl", "fileLength": "dužina {t}", "footerNote": "Jedan HTML fajl. Radi i bez interneta.", "issueBackwards": "Obrnuto vreme", "issueEmpty": "Prazni titlovi", "issueFast": "Brzi titlovi", "issueLineLong": "Dugački redovi", "issueLines": "Previše redova", "issueLong": "Dugački titlovi", "issueOverlap": "Preklapanja", "issueShort": "Kratki titlovi", "lede": "Ubaci SRT ili VTT fajl, popravi vreme i dužinu redova, i uzmi ga nazad u istom formatu. Sve se dešava u ovom tabu.", "loadPaste": "Pročitaj tekst", "noneIssues": "U ovom fajlu nema šta da se popravi.", "pasteLabel": "Ili nalepi titl", "pastePlaceholder": "1\n00:00:01,000 --> 00:00:04,000\nZdravo", "privacy": "Fajl čita ovaj tab. Ništa se ne otprema, ništa se ne čuva, nalog se ne traži.", "reportCues": "Titlovi", "reportIssues": "Problemi", "reportLength": "Dužina", "sample": "Učitaj primer", "sampleName": "primer.srt", "sectionExport": "Uzmi nazad", "sectionReport": "Šta je u fajlu", "sectionText": "Tekst", "sectionTiming": "Vreme", "shiftHint": "Negativan broj pomera sve ranije. Ništa ne ide pre nule.", "shiftLabel": "Sekundi za dodavanje", "skip": "Pređi na fajl", "speedHint": "Stavi 1,25 ako je snimak ubrzan na 125 posto, da titl drži korak.", "speedLabel": "Brzina snimka", "supportLink": "Podrži rad", "supportText": "Bez kurseva, bez koučinga, bez \"zaradi sa AI\". Alati su besplatni i ostaju besplatni.", "theme": "Promeni temu", "title": "Titlovi koji se otvaraju čisto", "toastCleaned": "Uklonjeni titlovi: {n}", "toastFixed": "Preklapanja popravljena: {n}", "toastLeft": "Još se preklapaju: {n}. Prethodni titl je bio prekratak da se skrati.", "toastShift": "Pomereno za {n} sekundi.", "toastSorted": "Sortirano po vremenu.", "toastSpeed": "Retimirano za {n}x.", "toastSplit": "Podeljeni titlovi: {n}", "toastStripped": "Titlovi bez oznaka: {n}", "toastWrapped": "Prelomljeni redovi: {n}", "tooMany": "Vidi se prvih {n}. Ostalo je u fajlu.", "uiLanguage": "Jezik interfejsa", "wrapLabel": "Znakova po redu"},
+  "sr-cyrl": {"applyShift": "Примени", "applySpeed": "Примени", "btnClean": "Очисти текст", "btnCopy": "Копирај", "btnDownload": "Преузми", "btnOverlaps": "Поправи преклапања", "btnSort": "Сортирај по времену", "btnSplit": "Подели дугачке титлове", "btnStrip": "Скини ознаке", "btnWrap": "Преломи редове", "clear": "Почни испочетка", "copied": "Копирано", "cueList": "Титлови", "dropHint": "Један фајл одједном. Чита се овде и остаје овде.", "dropOr": "или изабери један са рачунара", "dropTitle": "Убаци SRT или VTT овде", "emptyState": "Учитај фајл па ћеш видети титлове овде.", "errorFile": "Фајл није могао да се прочита као текст.", "errorParse": "У овом тексту нема титлова.", "exportFormat": "Формат", "fileCues_few": "{n} титла", "fileCues_many": "{n} титлова", "fileCues_one": "{n} титл", "fileLength": "дужина {t}", "footerNote": "Један HTML фајл. Ради и без интернета.", "issueBackwards": "Обрнуто време", "issueEmpty": "Празни титлови", "issueFast": "Брзи титлови", "issueLineLong": "Дугачки редови", "issueLines": "Превише редова", "issueLong": "Дугачки титлови", "issueOverlap": "Преклапања", "issueShort": "Кратки титлови", "lede": "Убаци SRT или VTT фајл, поправи време и дужину редова, и узми га назад у истом формату. Све се дешава у овом табу.", "loadPaste": "Прочитај текст", "noneIssues": "У овом фајлу нема шта да се поправи.", "pasteLabel": "Или налепи титл", "pastePlaceholder": "1\n00:00:01,000 --> 00:00:04,000\nЗдраво", "privacy": "Фајл чита овај таб. Ништа се не отпрема, ништа се не чува, налог се не тражи.", "reportCues": "Титлови", "reportIssues": "Проблеми", "reportLength": "Дужина", "sample": "Учитај пример", "sampleName": "пример.srt", "sectionExport": "Узми назад", "sectionReport": "Шта је у фајлу", "sectionText": "Текст", "sectionTiming": "Време", "shiftHint": "Негативан број помера све раније. Ништа не иде пре нуле.", "shiftLabel": "Секунди за додавање", "skip": "Пређи на фајл", "speedHint": "Стави 1,25 ако је снимак убрзан на 125 посто, да титл држи корак.", "speedLabel": "Брзина снимка", "supportLink": "Подржи рад", "supportText": "Без курсева, без коучинга, без \"заради са AI\". Алати су бесплатни и остају бесплатни.", "theme": "Промени тему", "title": "Титлови који се отварају чисто", "toastCleaned": "Уклоњени титлови: {n}", "toastFixed": "Преклапања поправљена: {n}", "toastLeft": "Још се преклапају: {n}. Претходни титл је био прекратак да се скрати.", "toastShift": "Померено за {n} секунди.", "toastSorted": "Сортирано по времену.", "toastSpeed": "Ретимирано за {n}x.", "toastSplit": "Подељени титлови: {n}", "toastStripped": "Титлови без ознака: {n}", "toastWrapped": "Преломљени редови: {n}", "tooMany": "Види се првих {n}. Остало је у фајлу.", "uiLanguage": "Језик интерфејса", "wrapLabel": "Знакова по реду"}
+};
+</script>
+<script>
+/* Subtitle Cleaner - TekiDeki
+   The file is read here, cleaned here and written back here. Nothing leaves
+   the tab, so there is no upload step to wait for and nothing to sign up to. */
+
+(function () {
+  'use strict';
+
+  var M = window.TDSubs;
+  var ALL = window.TD_LOCALES || {};
+
+  var THEME_KEY = 'subs.theme';
+  var LANG_KEY = 'subs.lang';
+  var RENDER_LIMIT = 400;
+  var TOAST_MS = 3200;
+
+  var state = {
+    lang: 'en',
+    format: 'srt',
+    cues: [],
+    name: ''
+  };
+
+  var wired = false;
+  var toastTimer = 0;
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  /* --------------------------------------------------------------- strings */
+
+  function t(key, vars) {
+    var table = ALL[state.lang] || ALL.en || {};
+    var text = table[key];
+    if (text === undefined) text = (ALL.en || {})[key];
+    if (text === undefined) return key;
+    if (vars) {
+      Object.keys(vars).forEach(function (name) {
+        text = text.split('{' + name + '}').join(String(vars[name]));
+      });
+    }
+    return text;
+  }
+
+  // Serbian has three plural shapes, Romanian two plus "de" from twenty up,
+  // English two. The count decides which key is read.
+  function pluralIndex(count) {
+    var n = Math.abs(Number(count) || 0);
+    if (state.lang === 'ro') {
+      if (n === 1) return 'one';
+      return (n === 0 || n % 100 >= 20) ? 'many' : 'few';
+    }
+    if (state.lang === 'sr-latn' || state.lang === 'sr-cyrl') {
+      var ten = n % 10;
+      var hundred = n % 100;
+      if (ten === 1 && hundred !== 11) return 'one';
+      if (ten >= 2 && ten <= 4 && (hundred < 12 || hundred > 14)) return 'few';
+      return 'many';
+    }
+    return n === 1 ? 'one' : 'many';
+  }
+
+  function tn(base, count, vars) {
+    var merged = { n: count };
+    if (vars) Object.keys(vars).forEach(function (name) { merged[name] = vars[name]; });
+    return t(base + '_' + pluralIndex(count), merged);
+  }
+
+  var LANGS = [
+    ['en', 'English'],
+    ['ro', 'Română'],
+    ['sr-latn', 'Srpski (latinica)'],
+    ['sr-cyrl', 'Српски (ћирилица)']
+  ];
+
+  function detectLang() {
+    var saved = '';
+    try { saved = localStorage.getItem(LANG_KEY) || ''; } catch (error) {}
+    if (ALL[saved]) return saved;
+    var tag = String((navigator.language || navigator.userLanguage || 'en')).toLowerCase();
+    if (tag.indexOf('ro') === 0) return 'ro';
+    if (tag.indexOf('sr') === 0) return 'sr-latn';
+    return 'en';
+  }
+
+  function applyLang(lang) {
+    if (!ALL[lang]) lang = 'en';
+    state.lang = lang;
+    document.documentElement.lang = lang === 'sr-cyrl' ? 'sr-Cyrl' : lang === 'sr-latn' ? 'sr-Latn' : lang;
+    document.querySelectorAll('[data-i18n]').forEach(function (node) {
+      node.textContent = t(node.getAttribute('data-i18n'));
+    });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(function (node) {
+      node.setAttribute('placeholder', t(node.getAttribute('data-i18n-placeholder')));
+    });
+    document.querySelectorAll('[data-i18n-aria-label]').forEach(function (node) {
+      node.setAttribute('aria-label', t(node.getAttribute('data-i18n-aria-label')));
+    });
+    $('lang').value = lang;
+    try { localStorage.setItem(LANG_KEY, lang); } catch (error) {}
+    render();
+  }
+
+  /* ----------------------------------------------------------------- theme */
+
+  function currentTheme() {
+    return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  }
+
+  function toggleTheme() {
+    var next = currentTheme() === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem(THEME_KEY, next); } catch (error) {}
+  }
+
+  /* ----------------------------------------------------------------- toast */
+
+  function toast(text) {
+    var node = $('toast');
+    node.textContent = text;
+    node.hidden = false;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { node.hidden = true; }, TOAST_MS);
+  }
+
+  /* ------------------------------------------------------------------ load */
+
+  var SAMPLE = [
+    '1',
+    '00:00:00,500 --> 00:00:02,900',
+    'This is a sample subtitle file with a few things to fix.',
+    '',
+    '2',
+    '00:00:02,500 --> 00:00:04,000',
+    'The first two cues overlap by four hundred milliseconds.',
+    '',
+    '3',
+    '00:00:04,200 --> 00:00:04,700',
+    'Too fast',
+    '',
+    '4',
+    '00:00:05,000 --> 00:00:06,200',
+    '   Extra   spaces   and <i>tags</i>   inside a line that is far too long to fit   ',
+    '',
+    '5',
+    '00:00:06,400 --> 00:00:12,200',
+    'A cue that sits on screen for almost six seconds and keeps one very long line of text.',
+    '',
+    '6',
+    '00:00:13,000 --> 00:00:14,000',
+    '   ',
+    ''
+  ].join('\n');
+
+  function decodeBytes(bytes) {
+    try {
+      return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch (error) {
+      try { return new TextDecoder('windows-1250').decode(bytes); } catch (inner) { return null; }
+    }
+  }
+
+  function load(text, name) {
+    var parsed = M.parse(text);
+    if (!parsed.cues.length) {
+      toast(t('errorParse'));
+      return false;
+    }
+    state.cues = parsed.cues;
+    state.name = name || '';
+    state.format = parsed.format;
+    $('format').value = state.format;
+    render();
+    return true;
+  }
+
+  function readFile(file) {
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      var bytes = new Uint8Array(reader.result);
+      var text = decodeBytes(bytes);
+      if (text === null) {
+        toast(t('errorFile'));
+        return;
+      }
+      load(text, file.name);
+    };
+    reader.onerror = function () { toast(t('errorFile')); };
+    reader.readAsArrayBuffer(file);
+  }
+
+  /* ----------------------------------------------------------------- render */
+
+  function issueLabel(code) {
+    if (code === 'overlap') return t('issueOverlap');
+    if (code === 'backwards') return t('issueBackwards');
+    if (code === 'empty') return t('issueEmpty');
+    if (code === 'short') return t('issueShort');
+    if (code === 'long') return t('issueLong');
+    if (code === 'fast') return t('issueFast');
+    if (code === 'lineLong') return t('issueLineLong');
+    if (code === 'tooManyLines') return t('issueLines');
+    return code;
+  }
+
+  var ISSUE_ORDER = ['overlap', 'backwards', 'empty', 'short', 'long', 'fast', 'lineLong', 'tooManyLines'];
+
+  function render() {
+    var cues = state.cues;
+    var has = cues.length > 0;
+
+    $('file-line').hidden = !has;
+    if (has) {
+      $('file-name').textContent = state.name || '';
+      $('file-meta').textContent = tn('fileCues', cues.length) + ' · ' +
+        t('fileLength', { t: M.formatClock(M.totalLength(cues)) });
+    }
+    $('btn-clear').hidden = !has;
+    ['btn-overlaps', 'btn-clean', 'btn-wrap', 'btn-split', 'btn-strip', 'btn-sort',
+     'btn-download', 'btn-copy', 'apply-shift', 'apply-speed'].forEach(function (id) {
+      $(id).disabled = !has;
+    });
+
+    var report = M.audit(cues);
+    $('stat-cues').textContent = String(cues.length);
+    $('stat-length').textContent = M.formatClock(M.totalLength(cues));
+    $('stat-issues').textContent = String(report.total);
+
+    var flags = {};
+    report.rows.forEach(function (row) { flags[row.index] = row.codes; });
+
+    var list = $('issues');
+    list.textContent = '';
+    ISSUE_ORDER.forEach(function (code) {
+      var count = report.counts[code] || 0;
+      if (!count) return;
+      var item = document.createElement('li');
+      item.appendChild(document.createTextNode(issueLabel(code)));
+      var dot = document.createElement('span');
+      dot.className = 'dot';
+      dot.textContent = '\u00b7';
+      item.appendChild(dot);
+      var number = document.createElement('b');
+      number.textContent = String(count);
+      item.appendChild(number);
+      list.appendChild(item);
+    });
+    $('clean-note').hidden = !(has && report.total === 0);
+
+    $('count').textContent = has ? tn('fileCues', cues.length) : '';
+    $('empty').hidden = has;
+
+    var box = $('cues');
+    box.textContent = '';
+    var shown = cues.slice(0, RENDER_LIMIT);
+    shown.forEach(function (cue, index) {
+      var row = document.createElement('li');
+      row.className = 'cue';
+
+      var time = document.createElement('span');
+      time.className = 'cue-time';
+      var start = document.createElement('b');
+      start.textContent = M.formatStamp(cue.start, '.');
+      time.appendChild(start);
+      time.appendChild(document.createTextNode(M.formatStamp(cue.end, '.')));
+
+      var body = document.createElement('span');
+      body.className = 'cue-text';
+      body.textContent = M.plain(cue.text) || '';
+
+      var codes = flags[index];
+      if (codes && codes.length) {
+        row.className = 'cue flag';
+        var tag = document.createElement('span');
+        tag.className = 'cue-flags';
+        tag.textContent = codes.map(issueLabel).join(' · ');
+        body.appendChild(tag);
+      }
+
+      row.appendChild(time);
+      row.appendChild(body);
+      box.appendChild(row);
+    });
+
+    var more = $('too-many');
+    if (cues.length > RENDER_LIMIT) {
+      more.textContent = t('tooMany', { n: RENDER_LIMIT });
+      more.hidden = false;
+    } else {
+      more.hidden = true;
+      more.textContent = '';
+    }
+  }
+
+  /* ------------------------------------------------------------- operations */
+
+  function apply(result) {
+    if (result && result.cues) state.cues = result.cues;
+    render();
+  }
+
+  function wrapLimit() {
+    var value = Math.round(Number($('wrap').value));
+    if (!isFinite(value) || value < 20) value = 20;
+    if (value > 60) value = 60;
+    $('wrap').value = String(value);
+    return value;
+  }
+
+  function onOverlaps() {
+    var result = M.fixOverlaps(state.cues, M.DEFAULT_LIMITS.minDuration);
+    apply(result);
+    var text = t('toastFixed', { n: result.fixed });
+    if (result.left > 0) text += ' ' + t('toastLeft', { n: result.left });
+    toast(text);
+  }
+
+  function onClean() {
+    var result = M.cleanText(state.cues);
+    apply(result);
+    toast(t('toastCleaned', { n: result.removed }));
+  }
+
+  function onWrap() {
+    var result = M.rewrap(state.cues, wrapLimit());
+    apply(result);
+    toast(t('toastWrapped', { n: result.changed }));
+  }
+
+  function onSplit() {
+    var result = M.splitLong(state.cues, wrapLimit(), M.DEFAULT_LIMITS.maxLines);
+    apply(result);
+    toast(t('toastSplit', { n: result.parts }));
+  }
+
+  function onStrip() {
+    var result = M.stripTags(state.cues);
+    apply(result);
+    toast(t('toastStripped', { n: result.changed }));
+  }
+
+  function onSort() {
+    apply({ cues: M.sortByTime(state.cues, true) });
+    toast(t('toastSorted'));
+  }
+
+  function onShift() {
+    var seconds = Number($('shift').value);
+    if (!isFinite(seconds)) seconds = 0;
+    if (!seconds) return;
+    apply(M.shift(state.cues, Math.round(seconds * 1000)));
+    toast(t('toastShift', { n: seconds }));
+    $('shift').value = '0';
+  }
+
+  function onSpeed() {
+    var factor = Number($('speed').value);
+    if (!isFinite(factor) || factor <= 0) return;
+    factor = Math.min(3, Math.max(0.5, factor));
+    $('speed').value = String(factor);
+    apply(M.retime(state.cues, factor));
+    toast(t('toastSpeed', { n: factor }));
+  }
+
+  /* ----------------------------------------------------------------- export */
+
+  function output() {
+    return M.serialize(state.cues, state.format);
+  }
+
+  function fileName() {
+    var base = (state.name || '').replace(/\.(srt|vtt)$/i, '');
+    if (!base) base = 'subtitles';
+    return base + '.' + state.format;
+  }
+
+  function download() {
+    if (!state.cues.length) return;
+    var blob = new Blob([output()], { type: 'text/plain;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement('a');
+    link.href = url;
+    link.download = fileName();
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  function copyOut() {
+    if (!state.cues.length) return;
+    var text = output();
+    function done() { toast(t('copied')); }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text, done); });
+    } else {
+      fallbackCopy(text, done);
+    }
+  }
+
+  function fallbackCopy(text, done) {
+    var area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.position = 'fixed';
+    area.style.left = '-9999px';
+    document.body.appendChild(area);
+    area.select();
+    try { document.execCommand('copy'); } catch (error) {}
+    document.body.removeChild(area);
+    done();
+  }
+
+  function clearAll() {
+    state.cues = [];
+    state.name = '';
+    $('paste').value = '';
+    $('file-input').value = '';
+    $('format').value = state.format;
+    render();
+  }
+
+  /* ------------------------------------------------------------------- wire */
+
+  function wire() {
+    if (wired) return;
+    wired = true;
+
+    var select = $('lang');
+    LANGS.forEach(function (pair) {
+      var option = document.createElement('option');
+      option.value = pair[0];
+      option.textContent = pair[1];
+      select.appendChild(option);
+    });
+    select.addEventListener('change', function () { applyLang(select.value); });
+    $('theme').addEventListener('click', toggleTheme);
+
+    $('file-input').addEventListener('change', function () {
+      readFile($('file-input').files[0]);
+    });
+
+    var drop = $('drop');
+    ['dragenter', 'dragover'].forEach(function (name) {
+      drop.addEventListener(name, function (event) {
+        event.preventDefault();
+        drop.classList.add('over');
+      });
+    });
+    ['dragleave', 'dragend'].forEach(function (name) {
+      drop.addEventListener(name, function () { drop.classList.remove('over'); });
+    });
+    drop.addEventListener('drop', function (event) {
+      event.preventDefault();
+      drop.classList.remove('over');
+      var file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
+      if (file) readFile(file);
+    });
+    ['dragover', 'drop'].forEach(function (name) {
+      window.addEventListener(name, function (event) {
+        if (event.target !== drop && !drop.contains(event.target)) event.preventDefault();
+      });
+    });
+
+    $('btn-paste').addEventListener('click', function () {
+      var text = $('paste').value;
+      if (!text.trim()) {
+        toast(t('errorParse'));
+        return;
+      }
+      if (load(text, '')) $('paste').value = '';
+    });
+
+    $('btn-sample').addEventListener('click', function () {
+      load(SAMPLE, t('sampleName'));
+    });
+
+    $('btn-clear').addEventListener('click', clearAll);
+    $('btn-overlaps').addEventListener('click', onOverlaps);
+    $('btn-clean').addEventListener('click', onClean);
+    $('btn-wrap').addEventListener('click', onWrap);
+    $('btn-split').addEventListener('click', onSplit);
+    $('btn-strip').addEventListener('click', onStrip);
+    $('btn-sort').addEventListener('click', onSort);
+    $('apply-shift').addEventListener('click', onShift);
+    $('apply-speed').addEventListener('click', onSpeed);
+    $('btn-download').addEventListener('click', download);
+    $('btn-copy').addEventListener('click', copyOut);
+
+    $('format').addEventListener('change', function () {
+      state.format = $('format').value === 'vtt' ? 'vtt' : 'srt';
+    });
+  }
+
+  /* ------------------------------------------------------------------- boot */
+
+  function boot() {
+    wire();
+    applyLang(detectLang());
+
+    var local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+    if ('serviceWorker' in navigator && (location.protocol === 'https:' || local)) {
+      navigator.serviceWorker.register('sw.js').catch(function () {});
+    }
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+
+  window.__subs = {
+    state: state,
+    load: load,
+    render: render,
+    output: output
+  };
+}());
+</script>
+<!-- Subtitle Cleaner 1.0.0 · single file build -->
+</body>
+</html>
